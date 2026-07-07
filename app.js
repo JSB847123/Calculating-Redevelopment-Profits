@@ -340,7 +340,7 @@ function buildCalculationSnapshot() {
       매수가: formatMoney(state.purchasePrice),
       분담금: formatMoney(state.contribution),
       연이자율: `${percentFormatter.format(state.rate)}%`,
-      보유기간: `${percentFormatter.format(state.years)}년`,
+      "보유기간(매수일부터 예상 매각일까지)": `${percentFormatter.format(state.years)}년`,
       매수부대비용: `${formatMoney(state.buyingCost)} (취득세·등기비)`,
       매도비용: `${formatMoney(state.sellingCost)} (중개보수 등)`,
       예상매각가: formatMoney(state.salePrice),
