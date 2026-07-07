@@ -1,18 +1,19 @@
 const DEFAULTS = {
-  equity: 55000,
-  loan: 25000,
+  equity: 5.5,
+  loan: 2.5,
   autoPurchase: true,
-  purchasePrice: 80000,
-  contribution: 30000,
+  purchasePrice: 8,
+  contribution: 3,
   rate: 5.5,
   years: 5,
   buyingCostRate: 3.5,
-  sellingCostRate: 0.8,
-  salePrice: 120000,
+  sellingCost: 0.1,
+  salePrice: 12,
   geminiModel: "gemini-3.5-flash",
 };
 
 const STORAGE_KEY = "rebuild-profit-calculator";
+const STORAGE_UNIT = "eok";
 const AI_KEY_STORAGE_KEY = "rebuild-profit-calculator-gemini-key";
 const AI_SETTINGS_STORAGE_KEY = "rebuild-profit-calculator-ai-settings";
 const GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
@@ -28,7 +29,7 @@ const fields = {
   rate: $("rate"),
   years: $("years"),
   buyingCostRate: $("buying-cost-rate"),
-  sellingCostRate: $("selling-cost-rate"),
+  sellingCost: $("selling-cost-input"),
   salePrice: $("sale-price"),
   saleSlider: $("sale-slider"),
   geminiApiKey: $("gemini-api-key"),
@@ -37,7 +38,7 @@ const fields = {
 };
 
 const moneyFormatter = new Intl.NumberFormat("ko-KR", {
-  maximumFractionDigits: 0,
+  maximumFractionDigits: 3,
 });
 
 const percentFormatter = new Intl.NumberFormat("ko-KR", {
@@ -59,7 +60,7 @@ function getState() {
     rate: readNumber(fields.rate),
     years: readNumber(fields.years),
     buyingCostRate: readNumber(fields.buyingCostRate),
-    sellingCostRate: readNumber(fields.sellingCostRate),
+    sellingCost: readNumber(fields.sellingCost),
     salePrice: readNumber(fields.salePrice),
     geminiModel: fields.geminiModel.value.trim() || DEFAULTS.geminiModel,
   };
@@ -80,7 +81,7 @@ function setState(state) {
   fields.rate.value = state.rate;
   fields.years.value = state.years;
   fields.buyingCostRate.value = state.buyingCostRate;
-  fields.sellingCostRate.value = state.sellingCostRate;
+  fields.sellingCost.value = state.sellingCost;
   fields.salePrice.value = state.salePrice;
   fields.geminiModel.value = state.geminiModel || DEFAULTS.geminiModel;
   syncSlider(state);
@@ -89,8 +90,45 @@ function setState(state) {
 
 function saveState(state) {
   const { geminiModel, ...calculatorState } = state;
+  calculatorState.unit = STORAGE_UNIT;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(calculatorState));
   localStorage.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify({ geminiModel }));
+}
+
+function convertLegacyMoneyToEok(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number / 10000 : value;
+}
+
+function migrateSavedCalculatorState(saved) {
+  if (saved.unit === STORAGE_UNIT) {
+    return saved;
+  }
+
+  const moneyKeys = ["equity", "loan", "purchasePrice", "contribution", "salePrice"];
+  const migrated = { ...saved };
+  const hasLegacySellingCostRate = Object.prototype.hasOwnProperty.call(saved, "sellingCostRate");
+  const looksLikeManwon = moneyKeys.some((key) => Number(saved[key]) >= 1000) || hasLegacySellingCostRate;
+
+  if (!looksLikeManwon) {
+    return migrated;
+  }
+
+  moneyKeys.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(migrated, key)) {
+      migrated[key] = convertLegacyMoneyToEok(migrated[key]);
+    }
+  });
+
+  if (hasLegacySellingCostRate && !Object.prototype.hasOwnProperty.call(migrated, "sellingCost")) {
+    const legacySalePrice = Number(saved.salePrice ?? DEFAULTS.salePrice * 10000);
+    const legacyRate = Math.max(0, Number(saved.sellingCostRate) || 0);
+    migrated.sellingCost = convertLegacyMoneyToEok(legacySalePrice * (legacyRate / 100));
+  }
+
+  delete migrated.sellingCostRate;
+  migrated.unit = STORAGE_UNIT;
+  return migrated;
 }
 
 function loadState() {
@@ -99,7 +137,7 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (saved && typeof saved === "object") {
-      Object.assign(state, saved);
+      Object.assign(state, migrateSavedCalculatorState(saved));
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -123,30 +161,10 @@ function loadAiKey() {
   fields.rememberAiKey.checked = Boolean(savedKey);
 }
 
-function formatWon(manwon) {
-  const sign = manwon < 0 ? "-" : "";
-  const value = Math.abs(Math.round(manwon));
-  const eok = Math.floor(value / 10000);
-  const rest = value % 10000;
-
-  if (eok > 0 && rest > 0) {
-    return `${sign}${moneyFormatter.format(eok)}억 ${moneyFormatter.format(rest)}만원`;
-  }
-
-  if (eok > 0) {
-    return `${sign}${moneyFormatter.format(eok)}억원`;
-  }
-
-  return `${sign}${moneyFormatter.format(rest)}만원`;
-}
-
-function formatShortWon(manwon) {
-  const sign = manwon < 0 ? "-" : "";
-  const value = Math.abs(manwon);
-  return `${sign}${(value / 10000).toLocaleString("ko-KR", {
-    minimumFractionDigits: value >= 10000 ? 1 : 2,
-    maximumFractionDigits: 2,
-  })}억`;
+function formatMoney(eok) {
+  const value = Number.isFinite(eok) ? eok : 0;
+  const sign = value < 0 ? "-" : "";
+  return `${sign}${moneyFormatter.format(Math.abs(value))}억원`;
 }
 
 function formatPercent(value) {
@@ -159,7 +177,7 @@ function calculateSaleOutcome(state, salePrice) {
   const loan = Math.max(0, state.loan);
   const neededEquity = Math.max(0, purchasePrice - loan);
   const buyingCost = purchasePrice * (Math.max(0, state.buyingCostRate) / 100);
-  const sellingCost = salePrice * (Math.max(0, state.sellingCostRate) / 100);
+  const sellingCost = Math.max(0, state.sellingCost);
   const totalInterest = loan * (Math.max(0, state.rate) / 100) * Math.max(0, state.years);
   const contribution = Math.max(0, state.contribution);
   const totalCashInvested = neededEquity + contribution + buyingCost + totalInterest;
@@ -185,9 +203,9 @@ function calculateSaleOutcome(state, salePrice) {
 
 function findBreakEvenPrice(state) {
   let low = 0;
-  let high = Math.max(1, state.purchasePrice + state.contribution + state.loan + 10000);
+  let high = Math.max(1, state.purchasePrice + state.contribution + state.loan + state.sellingCost + 10);
 
-  while (calculateSaleOutcome(state, high).profit < 0 && high < 10000000) {
+  while (calculateSaleOutcome(state, high).profit < 0 && high < 100000) {
     high *= 1.7;
   }
 
@@ -226,8 +244,8 @@ function updatePurchaseMode() {
 
 function syncSlider(state) {
   const salePrice = Math.max(0, state.salePrice);
-  const min = Math.max(0, Math.floor(Math.min(state.purchasePrice * 0.5, salePrice * 0.7) / 1000) * 1000);
-  const max = Math.max(1000, Math.ceil(Math.max(state.purchasePrice * 2.1, salePrice * 1.2) / 1000) * 1000);
+  const min = Math.max(0, Math.floor(Math.min(state.purchasePrice * 0.5, salePrice * 0.7) * 10) / 10);
+  const max = Math.max(1, Math.ceil(Math.max(state.purchasePrice * 2.1, salePrice * 1.2) * 10) / 10);
   fields.saleSlider.min = String(min);
   fields.saleSlider.max = String(max);
   fields.saleSlider.value = String(clamp(salePrice, min, max));
@@ -243,9 +261,9 @@ function updateRail(state, breakEven) {
   $("breakeven-marker").style.setProperty("--pos", `${position(breakEven)}%`);
   $("expected-marker").style.setProperty("--pos", `${position(state.salePrice)}%`);
 
-  setText("purchase-marker-value", formatShortWon(state.purchasePrice));
-  setText("breakeven-marker-value", formatShortWon(breakEven));
-  setText("expected-marker-value", formatShortWon(state.salePrice));
+  setText("purchase-marker-value", formatMoney(state.purchasePrice));
+  setText("breakeven-marker-value", formatMoney(breakEven));
+  setText("expected-marker-value", formatMoney(state.salePrice));
 }
 
 function updateScenarios(state, breakEven) {
@@ -279,8 +297,8 @@ function updateScenarios(state, breakEven) {
       <div class="bar-track" title="${label}">
         <div class="bar-fill" style="--width: ${width}%; --bar-color: ${isGood ? "var(--accent)" : "var(--danger)"}"></div>
       </div>
-      <span class="scenario-sale">${formatShortWon(outcome.salePrice)}</span>
-      <span class="scenario-profit ${isGood ? "good" : "bad"}">${formatShortWon(outcome.profit)}</span>
+      <span class="scenario-sale">${formatMoney(outcome.salePrice)}</span>
+      <span class="scenario-profit ${isGood ? "good" : "bad"}">${formatMoney(outcome.profit)}</span>
     `;
     table.appendChild(row);
   });
@@ -298,37 +316,37 @@ function buildCalculationSnapshot() {
     const scenarioOutcome = calculateSaleOutcome(state, salePrice);
     return {
       상승률: formatPercent(step),
-      매각가: formatWon(salePrice),
-      순이익: formatWon(scenarioOutcome.profit),
+      매각가: formatMoney(salePrice),
+      순이익: formatMoney(scenarioOutcome.profit),
       투입자본수익률: formatPercent(scenarioOutcome.cashRoe),
     };
   });
 
   return {
     입력값: {
-      보유자산: formatWon(state.equity),
-      대출금: formatWon(state.loan),
-      매수가: formatWon(state.purchasePrice),
-      분담금: formatWon(state.contribution),
+      보유자산: formatMoney(state.equity),
+      대출금: formatMoney(state.loan),
+      매수가: formatMoney(state.purchasePrice),
+      분담금: formatMoney(state.contribution),
       연이자율: `${percentFormatter.format(state.rate)}%`,
       보유기간: `${percentFormatter.format(state.years)}년`,
       매수부대비용률: `${percentFormatter.format(state.buyingCostRate)}% (취득세·등기비)`,
-      매도비용률: `${percentFormatter.format(state.sellingCostRate)}% (중개보수 등)`,
-      예상매각가: formatWon(state.salePrice),
+      매도비용: `${formatMoney(state.sellingCost)} (중개보수 등)`,
+      예상매각가: formatMoney(state.salePrice),
     },
     계산결과: {
-      손익분기매각가: formatWon(breakEven),
+      손익분기매각가: formatMoney(breakEven),
       필요상승률: formatPercent(requiredReturn),
       예상상승률: formatPercent(expectedReturn),
-      예상순이익: formatWon(outcome.profit),
+      예상순이익: formatMoney(outcome.profit),
       투입자본수익률: formatPercent(outcome.cashRoe),
-      월이자: formatWon(outcome.monthlyInterest),
-      총이자: formatWon(outcome.totalInterest),
-      매수부대비용: formatWon(outcome.buyingCost),
-      매도비용: formatWon(outcome.sellingCost),
-      총투입현금: formatWon(outcome.totalCashInvested),
-      매각후순수령액: formatWon(outcome.netSaleProceeds),
-      손익분기대비예상가차이: formatWon(saleGap),
+      월이자: formatMoney(outcome.monthlyInterest),
+      총이자: formatMoney(outcome.totalInterest),
+      매수부대비용: formatMoney(outcome.buyingCost),
+      매도비용: formatMoney(outcome.sellingCost),
+      총투입현금: formatMoney(outcome.totalCashInvested),
+      매각후순수령액: formatMoney(outcome.netSaleProceeds),
+      손익분기대비예상가차이: formatMoney(saleGap),
       제외항목: "양도세",
     },
     상승률별손익: scenarios,
@@ -467,29 +485,29 @@ function update() {
   const fundingGap = state.purchasePrice - state.equity - state.loan;
   const ltv = state.purchasePrice > 0 ? (state.loan / state.purchasePrice) * 100 : 0;
 
-  setText("break-even-price", formatWon(breakEven));
+  setText("break-even-price", formatMoney(breakEven));
   setText(
     "break-even-caption",
-    `매수가 ${formatWon(state.purchasePrice)}에서 최소 ${formatWon(Math.max(0, neededRise))} 상승해야 비용을 모두 회수합니다.`
+    `매수가 ${formatMoney(state.purchasePrice)}에서 최소 ${formatMoney(Math.max(0, neededRise))} 상승해야 비용을 모두 회수합니다.`
   );
   setText("required-return", formatPercent(requiredReturn));
-  setText("expected-profit", formatWon(outcome.profit));
+  setText("expected-profit", formatMoney(outcome.profit));
   setProfitClass($("expected-profit"), outcome.profit);
   setText("cash-roe", formatPercent(outcome.cashRoe));
   setProfitClass($("cash-roe"), outcome.cashRoe);
-  setText("monthly-interest", formatWon(outcome.monthlyInterest));
+  setText("monthly-interest", formatMoney(outcome.monthlyInterest));
 
-  setText("needed-equity", formatWon(outcome.neededEquity));
-  setText("contribution-cost", formatWon(outcome.contribution));
-  setText("total-interest", formatWon(outcome.totalInterest));
-  setText("buying-cost", formatWon(outcome.buyingCost));
-  setText("total-cash", formatWon(outcome.totalCashInvested));
+  setText("needed-equity", formatMoney(outcome.neededEquity));
+  setText("contribution-cost", formatMoney(outcome.contribution));
+  setText("total-interest", formatMoney(outcome.totalInterest));
+  setText("buying-cost", formatMoney(outcome.buyingCost));
+  setText("total-cash", formatMoney(outcome.totalCashInvested));
 
-  setText("gross-sale", formatWon(state.salePrice));
-  setText("selling-cost", formatWon(outcome.sellingCost));
-  setText("loan-payoff", formatWon(outcome.loan));
-  setText("net-sale-proceeds", formatWon(outcome.netSaleProceeds));
-  setText("sale-gap", `${saleGap >= 0 ? "손익분기 대비 +" : "손익분기 대비 "}${formatWon(saleGap)}`);
+  setText("gross-sale", formatMoney(state.salePrice));
+  setText("selling-cost", formatMoney(outcome.sellingCost));
+  setText("loan-payoff", formatMoney(outcome.loan));
+  setText("net-sale-proceeds", formatMoney(outcome.netSaleProceeds));
+  setText("sale-gap", `${saleGap >= 0 ? "손익분기 대비 +" : "손익분기 대비 "}${formatMoney(saleGap)}`);
   setText("funding-message", `LTV ${percentFormatter.format(ltv)}% · 예상 상승률 ${formatPercent(expectedReturn)}`);
 
   const status = $("deal-status");
@@ -498,9 +516,9 @@ function update() {
   status.textContent = outcome.profit >= 0 ? "예상 수익 구간" : "예상 손실 구간";
 
   if (fundingGap > 0) {
-    setText("funding-message", `자금 부족 ${formatWon(fundingGap)} · LTV ${percentFormatter.format(ltv)}%`);
+    setText("funding-message", `자금 부족 ${formatMoney(fundingGap)} · LTV ${percentFormatter.format(ltv)}%`);
   } else if (fundingGap < 0 && !state.autoPurchase) {
-    setText("funding-message", `잔여 현금 ${formatWon(Math.abs(fundingGap))} · LTV ${percentFormatter.format(ltv)}%`);
+    setText("funding-message", `잔여 현금 ${formatMoney(Math.abs(fundingGap))} · LTV ${percentFormatter.format(ltv)}%`);
   }
 
   updateRail(state, breakEven);

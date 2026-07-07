@@ -27,16 +27,16 @@
             <label class="field">
               <span>보유 현금/자산</span>
               <span class="number-wrap">
-                <input id="equity" name="equity" type="number" inputmode="numeric" min="0" step="100" value="55000" />
-                <em>만원</em>
+                <input id="equity" name="equity" type="number" inputmode="decimal" min="0" step="0.001" value="5.5" />
+                <em>억원</em>
               </span>
             </label>
 
             <label class="field">
               <span>주택담보대출</span>
               <span class="number-wrap">
-                <input id="loan" name="loan" type="number" inputmode="numeric" min="0" step="100" value="25000" />
-                <em>만원</em>
+                <input id="loan" name="loan" type="number" inputmode="decimal" min="0" step="0.001" value="2.5" />
+                <em>억원</em>
               </span>
             </label>
 
@@ -48,8 +48,8 @@
             <label class="field">
               <span>매수가</span>
               <span class="number-wrap">
-                <input id="purchase-price" name="purchasePrice" type="number" inputmode="numeric" min="0" step="100" value="80000" />
-                <em>만원</em>
+                <input id="purchase-price" name="purchasePrice" type="number" inputmode="decimal" min="0" step="0.001" value="8" />
+                <em>억원</em>
               </span>
             </label>
           </section>
@@ -60,8 +60,8 @@
             <label class="field">
               <span>분담금</span>
               <span class="number-wrap">
-                <input id="contribution" name="contribution" type="number" inputmode="numeric" min="0" step="100" value="30000" />
-                <em>만원</em>
+                <input id="contribution" name="contribution" type="number" inputmode="decimal" min="0" step="0.001" value="3" />
+                <em>억원</em>
               </span>
             </label>
 
@@ -93,8 +93,8 @@
               <label class="field">
                 <span>매도 비용 (중개보수 등)</span>
                 <span class="number-wrap">
-                  <input id="selling-cost-rate" name="sellingCostRate" type="number" inputmode="decimal" min="0" step="0.1" value="0.8" />
-                  <em>%</em>
+                  <input id="selling-cost-input" name="sellingCost" type="number" inputmode="decimal" min="0" step="0.001" value="0.1" />
+                  <em>억원</em>
                 </span>
               </label>
             </div>
@@ -106,11 +106,11 @@
             <label class="field field-large">
               <span>내가 보는 미래 가격</span>
               <span class="number-wrap">
-                <input id="sale-price" name="salePrice" type="number" inputmode="numeric" min="0" step="100" value="120000" />
-                <em>만원</em>
+                <input id="sale-price" name="salePrice" type="number" inputmode="decimal" min="0" step="0.001" value="12" />
+                <em>억원</em>
               </span>
             </label>
-            <input id="sale-slider" class="range" type="range" min="40000" max="180000" step="1000" value="120000" aria-label="예상 매각가 조절" />
+            <input id="sale-slider" class="range" type="range" min="4" max="18" step="0.1" value="12" aria-label="예상 매각가 조절" />
           </section>
 
           <section class="control-section" aria-labelledby="ai-title">
