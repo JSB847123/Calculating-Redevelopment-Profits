@@ -6,14 +6,14 @@ const DEFAULTS = {
   contribution: 3,
   rate: 5.5,
   years: 5,
-  buyingCostRate: 3.5,
+  buyingCost: 0.28,
   sellingCost: 0.1,
   salePrice: 12,
   geminiModel: "gemini-3.5-flash",
 };
 
 const STORAGE_KEY = "rebuild-profit-calculator";
-const STORAGE_UNIT = "eok";
+const STORAGE_UNIT = "eok-fixed-costs";
 const AI_KEY_STORAGE_KEY = "rebuild-profit-calculator-gemini-key";
 const AI_SETTINGS_STORAGE_KEY = "rebuild-profit-calculator-ai-settings";
 const GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
@@ -28,7 +28,7 @@ const fields = {
   contribution: $("contribution"),
   rate: $("rate"),
   years: $("years"),
-  buyingCostRate: $("buying-cost-rate"),
+  buyingCost: $("buying-cost-input"),
   sellingCost: $("selling-cost-input"),
   salePrice: $("sale-price"),
   saleSlider: $("sale-slider"),
@@ -59,7 +59,7 @@ function getState() {
     contribution: readNumber(fields.contribution),
     rate: readNumber(fields.rate),
     years: readNumber(fields.years),
-    buyingCostRate: readNumber(fields.buyingCostRate),
+    buyingCost: readNumber(fields.buyingCost),
     sellingCost: readNumber(fields.sellingCost),
     salePrice: readNumber(fields.salePrice),
     geminiModel: fields.geminiModel.value.trim() || DEFAULTS.geminiModel,
@@ -80,7 +80,7 @@ function setState(state) {
   fields.contribution.value = state.contribution;
   fields.rate.value = state.rate;
   fields.years.value = state.years;
-  fields.buyingCostRate.value = state.buyingCostRate;
+  fields.buyingCost.value = state.buyingCost;
   fields.sellingCost.value = state.sellingCost;
   fields.salePrice.value = state.salePrice;
   fields.geminiModel.value = state.geminiModel || DEFAULTS.geminiModel;
@@ -107,25 +107,36 @@ function migrateSavedCalculatorState(saved) {
 
   const moneyKeys = ["equity", "loan", "purchasePrice", "contribution", "salePrice"];
   const migrated = { ...saved };
+  const hasLegacyBuyingCostRate = Object.prototype.hasOwnProperty.call(saved, "buyingCostRate");
   const hasLegacySellingCostRate = Object.prototype.hasOwnProperty.call(saved, "sellingCostRate");
-  const looksLikeManwon = moneyKeys.some((key) => Number(saved[key]) >= 1000) || hasLegacySellingCostRate;
+  const savedUsesEok = saved.unit === "eok";
+  const looksLikeManwon =
+    !savedUsesEok && (moneyKeys.some((key) => Number(saved[key]) >= 1000) || hasLegacyBuyingCostRate || hasLegacySellingCostRate);
 
-  if (!looksLikeManwon) {
-    return migrated;
+  const legacyPurchasePrice = Number(saved.purchasePrice ?? (looksLikeManwon ? DEFAULTS.purchasePrice * 10000 : DEFAULTS.purchasePrice));
+  const legacySalePrice = Number(saved.salePrice ?? (looksLikeManwon ? DEFAULTS.salePrice * 10000 : DEFAULTS.salePrice));
+
+  if (looksLikeManwon) {
+    moneyKeys.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(migrated, key)) {
+        migrated[key] = convertLegacyMoneyToEok(migrated[key]);
+      }
+    });
   }
 
-  moneyKeys.forEach((key) => {
-    if (Object.prototype.hasOwnProperty.call(migrated, key)) {
-      migrated[key] = convertLegacyMoneyToEok(migrated[key]);
-    }
-  });
+  if (hasLegacyBuyingCostRate && !Object.prototype.hasOwnProperty.call(migrated, "buyingCost")) {
+    const legacyRate = Math.max(0, Number(saved.buyingCostRate) || 0);
+    const legacyCost = legacyPurchasePrice * (legacyRate / 100);
+    migrated.buyingCost = looksLikeManwon ? convertLegacyMoneyToEok(legacyCost) : legacyCost;
+  }
 
   if (hasLegacySellingCostRate && !Object.prototype.hasOwnProperty.call(migrated, "sellingCost")) {
-    const legacySalePrice = Number(saved.salePrice ?? DEFAULTS.salePrice * 10000);
     const legacyRate = Math.max(0, Number(saved.sellingCostRate) || 0);
-    migrated.sellingCost = convertLegacyMoneyToEok(legacySalePrice * (legacyRate / 100));
+    const legacyCost = legacySalePrice * (legacyRate / 100);
+    migrated.sellingCost = looksLikeManwon ? convertLegacyMoneyToEok(legacyCost) : legacyCost;
   }
 
+  delete migrated.buyingCostRate;
   delete migrated.sellingCostRate;
   migrated.unit = STORAGE_UNIT;
   return migrated;
@@ -176,7 +187,7 @@ function calculateSaleOutcome(state, salePrice) {
   const purchasePrice = Math.max(0, state.purchasePrice);
   const loan = Math.max(0, state.loan);
   const neededEquity = Math.max(0, purchasePrice - loan);
-  const buyingCost = purchasePrice * (Math.max(0, state.buyingCostRate) / 100);
+  const buyingCost = Math.max(0, state.buyingCost);
   const sellingCost = Math.max(0, state.sellingCost);
   const totalInterest = loan * (Math.max(0, state.rate) / 100) * Math.max(0, state.years);
   const contribution = Math.max(0, state.contribution);
@@ -203,7 +214,7 @@ function calculateSaleOutcome(state, salePrice) {
 
 function findBreakEvenPrice(state) {
   let low = 0;
-  let high = Math.max(1, state.purchasePrice + state.contribution + state.loan + state.sellingCost + 10);
+  let high = Math.max(1, state.purchasePrice + state.contribution + state.loan + state.buyingCost + state.sellingCost + 10);
 
   while (calculateSaleOutcome(state, high).profit < 0 && high < 100000) {
     high *= 1.7;
@@ -330,7 +341,7 @@ function buildCalculationSnapshot() {
       분담금: formatMoney(state.contribution),
       연이자율: `${percentFormatter.format(state.rate)}%`,
       보유기간: `${percentFormatter.format(state.years)}년`,
-      매수부대비용률: `${percentFormatter.format(state.buyingCostRate)}% (취득세·등기비)`,
+      매수부대비용: `${formatMoney(state.buyingCost)} (취득세·등기비)`,
       매도비용: `${formatMoney(state.sellingCost)} (중개보수 등)`,
       예상매각가: formatMoney(state.salePrice),
     },
